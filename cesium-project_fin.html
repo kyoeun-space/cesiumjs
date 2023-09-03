@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <script src="https://cesium.com/downloads/cesiumjs/releases/1.100/Build/Cesium/Cesium.js"></script>
+        <link
+        href="https://cesium.com/downloads/cesiumjs/releases/1.100/Build/Cesium/Widgets/widgets.css"
+        rel="stylesheet"
+        />
+    </head>
+    <body>
+        <div id="cesiumContainer"></div>
+        <script>
+        
+        Cesium.Ion.defaultAccessToken = "";
+        const viewer = new Cesium.Viewer("cesiumContainer", {terrainProvider: Cesium.createWorldTerrain(), });
+        /*****OFF-LINE*****
+        1. 
+        Cesium.Ion.defaultAccessToken = null;
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+                                        imageryProvider: false,
+                                        baseLayerPicker: false,
+                                        geocoder: false, });
+        viewer.imageryLayers.addImageryProvider(new Cesium.TileMapServiceImageryProvider({
+                                        url: Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII"),})); //>> 저화질
+
+        viewer.imageryLayers.addImageryProvider(new Cesium.WebMapServiceImageryProvider({
+                                        url: 'url', layers: 'cartographie:worldMix', ...})); //>> 고화질 (WMS, 웹 사이트 ...)
+
+        정상적으로 요청은 되지만 화면에 뜨지 않는 상태 => CORS
+        
+        2. webpack
+        3D files can be placed under the same location where the required static Cesium files are, just make a separate directory for 3d files and reference the files with something like that:
+        You may need to adjust the path a bit, I am using react in my case and that is the path I am using to access the 3d asset from the React component with the Cesium viewer element, i.e. assets are under public/static/3d-models
+
+        model: {uri: “…/static/3d-models/GroundVehicle.glb”},
+
+        https://community.cesium.com/t/3d-models-failed-to-external-gltf-file/1990
+        https://community.cesium.com/t/i-cant-import-my-gltf-3dmodel/2293/3
+        https://community.cesium.com/t/using-cesiumjs-on-a-closed-network/19697/5
+        https://github.com/CesiumGS/cesium/tree/main/Documentation/OfflineGuide
+        *******************/
+
+        //quaternionData : ECI to bodyframe
+        const quaternionData = JSON.parse();
+        //positionData : positon (ECI)
+        const positionData = JSON.parse();
+        //antenna Data : Antenna pointing (azimuth, elevation)
+        const AntennaData = JSON.parse();
+        //modeData : for TEXT
+        const modeData = JSON.parse();
+        
+        const coneLengthArr = [];
+        const eciposition = [];
+        const AntennaElements = [];
+        const modeNames = []; //for Callback func
+        const timeStepInSeconds = 30;
+        const totalSeconds = timeStepInSeconds * (positionData.length);
+        const start = Cesium.JulianDate.fromIso8601("2022-09-26T22:37:24Z");
+        const stop = Cesium.JulianDate.addSeconds(start, totalSeconds, new Cesium.JulianDate());
+
+        viewer.clock.startTime = start.clone();
+        viewer.clock.stopTime = stop.clone();
+        viewer.clock.currentTime = start.clone();
+        viewer.timeline.zoomTo(start, stop);
+        viewer.clock.multiplier = 120;
+        viewer.clock.shouldAnimate = true;
+        viewer.scene.globe.enableLighting = true;
+        viewer.scene.globe.depthTestAgainstTerrain = false;
+
+        const timeInterval = new Cesium.TimeInterval({start: start, stop: stop, });
+
+        const bodyframePropertyX = new Cesium.SampledPositionProperty(1, 0);
+        const bodyframePropertyY = new Cesium.SampledPositionProperty(1, 0);
+        const bodyframePropertyZ = new Cesium.SampledPositionProperty(1, 0);
+
+        const AntennaframeZ = new Cesium.SampledPositionProperty(1, 0); //pointing axis
+
+        const sunpositionProperty = new Cesium.SampledPositionProperty(1, 0);
+        const positionProperty = new Cesium.SampledPositionProperty(1, 0);
+        const attitudeProperty = new Cesium.SampledProperty(Cesium.Quaternion);
+
+        const conemidpositionProperty = new Cesium.SampledPositionProperty(1, 0);
+        const conelengthProperty = new Cesium.SampledProperty(Number);
+      
+        const modetextProperty = new Cesium.SampledProperty(String);
+
+        const AntennapositionProperty = new Cesium.SampledPositionProperty(1, 0);
+        const AntennaattitudeProperty = new Cesium.SampledProperty(Cesium.Quaternion);
+
+        const origin = Cesium.Cartesian3.ZERO;
+        const EnuToEcefMatrix4 = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
+        const EnuToEcefMatrix3 = Cesium.Matrix4.getRotation(EnuToEcefMatrix4, new Cesium.Matrix3());
+        const EnuToEcefQuaternion = Cesium.Quaternion.fromRotationMatrix(EnuToEcefMatrix3);
+        Cesium.Quaternion.normalize(EnuToEcefQuaternion, EnuToEcefQuaternion);
+        const EcefToEnuQuaternion = Cesium.Quaternion.conjugate(EnuToEcefQuaternion, new Cesium.Quaternion());
+
+        const unitX = Cesium.Cartesian3.UNIT_X;
+        const unitY = Cesium.Cartesian3.UNIT_Y;
+        const unitZ = Cesium.Cartesian3.UNIT_Z;
+
+        function makeQuaternion(mntheadingval, mntpitchval, mntrollval, azimuth, elevation, SatelliteQuaternion) {
+            const MntHeading = Cesium.Math.toRadians(mntheadingval);
+            const MntPitch = Cesium.Math.toRadians(mntpitchval);
+            const MntRoll = Cesium.Math.toRadians(mntrollval);
+            const MntHeadingPitchRoll = new Cesium.HeadingPitchRoll(-MntHeading, -MntPitch, MntRoll);
+
+            const AntennaHeading = Cesium.Math.toRadians(azimuth + PI/2);
+            const AntennaPitch = Cesium.Math.toRadians(elevation);
+            const AntennaRoll = Cesium.Math.toRadians(0);
+            const AntennaHeadingPitchRoll = new Cesium.HeadingPitchRoll(-AntennaHeading, AntennaPitch, AntennaRoll);
+
+            const EcefToMntQuaternion = Cesium.Transforms.headingPitchRollQuaternion(origin, MntHeadingPitchRoll);
+            const BodyToMntQuaternion = Cesium.Quaternion.multiply(EcefToEnuQuaternion, EcefToMntQuaternion, new Cesium.Quaternion());
+
+            const EcefToAntennaQuaternion = Cesium.Transforms.headingPitchRollQuaternion(origin, AntennaHeadingPitchRoll);
+            const MntToAntennaQuaternion = Cesium.Quaternion.multiply(EcefToEnuQuaternion, EcefToAntennaQuaternion, new Cesium.Quaternion());
+
+            const EciToMntQuaternion = Cesium.Quaternion.multiply(SatelliteQuaternion, BodyToMntQuaternion, new Cesium.Quaternion());
+            const EciToAntennaQuaternion = Cesium.Quaternion.multiply(EciToMntQuaternion, MntToAntennaQuaternion, new Cesium.Quaternion());
+
+            return EciToAntennaQuaternion;
+        }
+
+        function makePointingAxis(EciToAntennaQuaternion, unitZ, conelength, eciposition) {
+            const EciToAntennaMatrix = Cesium.Matrix3.fromQuaternion(EciToAntennaQuaternion, new Cesium.Matrix3());
+            const AntennaframeUnitZ = Cesium.Matrix3.multiplyByVector(EciToAntennaMatrix, unitZ, new Cesium.Cartesian3());
+            const AntennaframeNtiemsZ = Cesium.Cartesian3.multiplyByScalar(AntennaframeUnitZ, conelength/2, new Cesium.Cartesian3());
+            const AntennaframeZ = Cesium.Cartesian3.add(eciposition, AntennaframeNtiemsZ, new Cesium.Cartesian3());
+
+            return AntennaframeZ;
+        }
+
+        for (let i = 0; i < positionData.length; i++) {
+            const positionElements = positionData[i];
+            const quaternionElements = quaternionData[i];
+            modeNames.push(modeData[i]);
+            AntennaElements.push(AntennaData[i]);
+
+            const time = Cesium.JulianDate.addSeconds(start, i * timeStepInSeconds, new Cesium.JulianDate());
+
+            const SatelliteQuaternion = new Cesium.Quaternion(quaternionElements.q1, quaternionElements.q2, quaternionElements.q3, quaternionElements.q4);
+
+            const positionKm = Cesium.Cartesian3.fromElements(positionElements.x, positionElements.y, positionElements.z);
+            const positionMeter = Cesium.Cartesian3.multiplyByScalar(positionKm, 1000, new Cesium.Cartesian3());
+            eciposition.push(positionMeter);
+            positionProperty.addSample(time, positionMeter);
+
+            const coneLength = Cesium.Cartesian3.magnitude(positionMeter);
+            coneLengthArr.push(coneLength);
+            conelengthProperty.addSample(time, coneLength);
+
+            const sunposition = Cesium.Simon1994PlanetaryPositions.computeSunPositionInEarthInertialFrame(time);
+            sunpositionProperty.addSample(time, sunposition);
+
+            const EcefToBody = new Cesium.Quaternion();
+            const waiting = Cesium.Transforms.preloadIcrfFixed(timeInterval);
+            waiting.then(function() {
+                const EciToEcefMatrix = Cesium.Transforms.computeIcrfToFixedMatrix(time);
+
+                if (Cesium.defined(EciToEcefMatrix)) {
+                    const EciToEcef = Cesium.Quaternion.fromRotationMatrix(EciToEcefMatrix);
+                    Cesium.Quaternion.multiply(EciToEcef, SatelliteQuaternion, EcefToBody);
+                    attitudeProperty.addSample(time, EcefToBody);
+
+                    if ("Antenna1" === AntennaElements[i].id) {
+                        const EciToAntennaQuaternion = makeQuaternion(80, 10, 0, AntennaElements[i].az, AntennaElements[i].el, SatelliteQuaternion); //eci to Antenna
+                        
+                        const EcefToAntennaQuaternion = Cesium.Quaternion.multiply(EciToEcef, EciToAntennaQuaternion, new Cesium.Quaternion());
+                        AntennaattitudeProperty.addSample(time, EcefToAntennaQuaternion);
+
+                        const PointingAxis = makePointingAxis(EciToAntennaQuaternion, unitZ, coneLengthArr[i], eciposition[i]);
+                        conemidpositionProperty.addSample(time, PointingAxis);
+                        AntennaframeZ.addSample(time, PointingAxis);
+                    }
+                    else if ("Antenna2" === AntennaElements[i].id) {
+                        const EciToAntennaQuaternion = makeQuaternion(-80, 10, 0, AntennaElements[i].az, AntennaElements[i].el, SatelliteQuaternion); //eci to Antenna
+                        
+                        const EcefToAntennaQuaternion = Cesium.Quaternion.multiply(EciToEcef, EciToAntennaQuaternion, new Cesium.Quaternion());
+                        AntennaattitudeProperty.addSample(time, EcefToAntennaQuaternion);
+
+                        const PointingAxis = makePointingAxis(EciToAntennaQuaternion, unitZ, coneLengthArr[i], eciposition[i]);
+                        conemidpositionProperty.addSample(time, PointingAxis);
+                        AntennaframeZ.addSample(time, PointingAxis); 
+                    }
+                }
+            });
+
+            const EciToBodyMatrix = Cesium.Matrix3.fromQuaternion(SatelliteQuaternion);
+            
+            const BodyframeUnitX = Cesium.Matrix3.multiplyByVector(EciToBodyMatrix, unitX, new Cesium.Cartesian3());
+            const BodyframeUnitY = Cesium.Matrix3.multiplyByVector(EciToBodyMatrix, unitY, new Cesium.Cartesian3());
+            const BodyframeUnitZ = Cesium.Matrix3.multiplyByVector(EciToBodyMatrix, unitZ, new Cesium.Cartesian3());
+
+            const BodyframeNtimesX = Cesium.Cartesian3.multiplyByScalar(BodyframeUnitX, 10e5, new Cesium.Cartesian3());
+            const BodyframeNtimesY = Cesium.Cartesian3.multiplyByScalar(BodyframeUnitY, 10e5, new Cesium.Cartesian3());
+            const BodyframeNtimesZ = Cesium.Cartesian3.multiplyByScalar(BodyframeUnitZ, 10e5, new Cesium.Cartesian3());
+
+            const BodyframeX = Cesium.Cartesian3.add(positionMeter, BodyframeNtimesX, new Cesium.Cartesian3());
+            const BodyframeY = Cesium.Cartesian3.add(positionMeter, BodyframeNtimesY, new Cesium.Cartesian3());
+            const BodyframeZ = Cesium.Cartesian3.add(positionMeter, BodyframeNtimesZ, new Cesium.Cartesian3());
+
+            bodyframePropertyX.addSample(time, BodyframeX);
+            bodyframePropertyY.addSample(time, BodyframeY);
+            bodyframePropertyZ.addSample(time, BodyframeZ);
+        }
+
+        //satellite
+        async function loadModel() {
+            const SatelliteUri = await Cesium.IonResource.fromAssetId(); //satellite model
+            const SatelliteEntity = viewer.entities.add({
+                availability: new Cesium.TimeIntervalCollection([timeInterval]),
+                position: positionProperty,
+                orientation: attitudeProperty,
+                model: {
+                    uri: SatelliteUri,
+                    minimumPixelSize: 200.0 
+                },
+                path: new Cesium.PathGraphics({
+                    width: 2,
+                    leadTime: 0,
+                    trailTime: 2 * 60 * 60,
+                }),
+                viewFrom: positionProperty, //zoom out
+            });
+            viewer.trackedEntity = SatelliteEntity;
+        }
+
+        //Antenna cone 
+        viewer.entities.add({
+            position: conemidpositionProperty,
+            orientation: AntennaattitudeProperty,
+            cylinder: {
+                length: conelengthProperty,
+                topRadius: 1000000.0,
+                bottomRadius: 0.0,
+                material: Cesium.Color.DARKORANGE.withAlpha(0.5),
+            },
+        });
+
+        //sun vector
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        sunpositionProperty.getValue(viewer.clock.currentTime),
+                    ];
+                }),
+                width: 1,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.RED,
+            },
+        });
+
+        //center of earth vector
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        Cesium.Cartesian3.fromElements(0, 0, 0),
+                    ];
+                }),
+                width: 1,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.GREEN,
+            },
+        });
+        
+        //satellite bodyframe x
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        bodyframePropertyX.getValue(viewer.clock.currentTime),
+                    ];
+                }),
+                width: 3,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.AQUA,
+            },
+        });
+        
+        //satellite bodyframe y
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        bodyframePropertyY.getValue(viewer.clock.currentTime),
+                    ]; 
+                }),
+                width: 3,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.GOLD,
+            },
+        });
+        
+        //satellite bodyframe z
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        bodyframePropertyZ.getValue(viewer.clock.currentTime),
+                    ];
+                }),
+                width: 3,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.LIME,
+            },
+        });
+
+        //pointing vector 
+        viewer.entities.add({
+            polyline: {
+                positions: new Cesium.CallbackProperty(function (time, result) {
+                    return [
+                        positionProperty.getValue(viewer.clock.currentTime),
+                        AntennaframeZ.getValue(viewer.clock.currentTime),
+                    ]; 
+                }),
+                width: 6,
+                arcType: Cesium.ArcType.NONE,
+                material: Cesium.Color.YELLOW,
+            },
+        });
+        
+        //location
+        viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(126, 37),
+            label: {
+                text: "seoul",
+                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                horizontalOrigin: Cesium.HorizontalOrigin.RIGHT,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            },
+        });
+
+        //dynamic text -> callback : using time
+        viewer.entities.add({
+            position: positionProperty,
+            label: {
+                text: new Cesium.CallbackProperty(function() {
+                    const modeText = modeNames[parseInt(((viewer.clock.currentTime.dayNumber * 86400 + viewer.clock.currentTime.secondsOfDay) - (viewer.clock.startTime.dayNumber * 86400 + viewer.clock.startTime.secondsOfDay)) / timeStepInSeconds)]; 
+                    if (modeText.PLTmode === ""){
+                        return modeText.Mode_A;
+                    }
+                    else {
+                        return modeText.Mode_B;
+                    }}, false),
+                    pixelOffset: new Cesium.Cartesian2(100, -100),
+                },
+            });
+
+        loadModel();
+        </script>
+    </body>
+</html>
